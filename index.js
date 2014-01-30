@@ -30,7 +30,8 @@ var configuration =
         port        : 27017,
         database    : 'default'
     },
-    logging : true
+    logging : true,
+    limit   : 4
 
 }
 
@@ -49,6 +50,9 @@ var Mongo2Influx = function(options)
 
     if (options.mongodb)
         _.extend(configuration.mongodb,options.mongodb);
+
+    if (options.limit) configuration.limit = options.limit;
+    if (options.logging) configuration.logging = options.logging;
 
 }
 
@@ -121,7 +125,7 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
 
                     var index =0;
                     var startMigration = new Date();
-                    async.eachLimit(results,8,function(row,cb){
+                    async.eachLimit(results,configuration.limit,function(row,cb){
                         var data = prepareFunction(row);
 
                         if (!row.time) {
@@ -151,10 +155,7 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
                 }
             });
 
-        },function(err)
-        {
-            self.log('done with everything');
-        });
+        },callback);
     });
 
 }
