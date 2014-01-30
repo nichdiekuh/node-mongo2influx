@@ -1,0 +1,30 @@
+{
+  "name": "mongo2influx",
+  "version": "0.0.1",
+  "description": "Migrates timeseries data from mongodb to influxdb",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nichdiekuh/node-mongo2influx.git"
+  },
+  "keywords": [
+    "mongodb",
+    "influx",
+    "influxdb",
+    "convert",
+    "migration",
+    "time",
+    "series",
+    "client",
+    "db"
+  ],
+  "author": "Steffen Konerow <steffen@nrg-media.de> (http://www.nrg-media.de)",
+  "license": "MIT",
+  "dependencies": {
+    "async": "~0.2.10",
+    "underscore": "~1.5.2",
+    "influxdb": "0.0.1",
+    "mongodb": "~1.3.23"
+  },
+  "devDependencies": {}
+}
