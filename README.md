@@ -22,7 +22,7 @@ var mongo2influx = new Mongo2Influx({
             database    : 'source-database'
 
         },
-        logging : true // default to true, logs progress to cli
+        logging : true // defaults to true, logs progress to cli
     });
 
 
@@ -33,7 +33,3 @@ Take a look /examples/migrate.js for further instructions.
 
 This repository is under development.
 
-
-## usage
-
-Best
