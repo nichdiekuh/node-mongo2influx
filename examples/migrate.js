@@ -21,9 +21,13 @@ var mongo2influx = new Mongo2Influx({
 
 function prepareData(row)
 {
+    // remove the mongoDB id
     delete(row['_id']);
+
+    //Assuming your mongodb rows contain a mongoDB date, copy date to time
     row.time = row.date;
-    row['date'] = null;
+
+    // delete unwanted fields
     delete(row.date);
     return row;
 }
