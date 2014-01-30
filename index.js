@@ -30,8 +30,9 @@ var configuration =
         port        : 27017,
         database    : 'default'
     },
-    logging : true,
-    limit   : 4
+    logging     : true,
+    limit       : 4,
+    emptySeries : false
 
 }
 
@@ -63,7 +64,7 @@ Mongo2Influx.prototype.connect = function (cb)
         configuration.influxserver.hostname,
         configuration.influxserver.port,
         configuration.influxserver.user,
-        configuration.influxserver.pass,
+        configuration.influxserver.password,
         configuration.influxserver.database
     );
 
@@ -71,10 +72,9 @@ Mongo2Influx.prototype.connect = function (cb)
         configuration.influxdb.hostname,
         configuration.influxdb.port,
         configuration.influxdb.user,
-        configuration.influxdb.pass,
+        configuration.influxdb.password,
         configuration.influxdb.database
     );
-
     mongoClient = new MongoClient(new Server(configuration.mongodb.hostname, configuration.mongodb.port));
 
     mongoClient.open(function ( err, mongoClient ) {
@@ -94,6 +94,92 @@ Mongo2Influx.prototype.log = function ()
     }
 }
 
+Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,callbackCollections)
+{
+    var self = this;
+    var collectionName = collection.collectionName;
+    if ( -1 !== collectionName.indexOf('system')) return callbackCollections();
+    self.log('next collection: ',collectionName);
+    var startDump = new Date();
+    collection.find().toArray(function(err, results) {
+        if (!err && _.isArray(results))
+        {
+            self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
+
+            var index =0;
+            var startMigration = new Date();
+            async.eachLimit(results,configuration.limit,function(row,cb){
+                var data = prepareFunction(row);
+
+                if (!row.time) {
+                    self.log('skipped row',row);
+                    return cb();
+                }
+                influxDB.writePoint(collectionName, data , {pool : false}, function(err) {
+                    if (err)
+                    {
+                        return cb(err)
+                    }
+                    else {
+                        index++;
+                        if (0 == index%1000)
+                        {
+                            var diff = (new Date()-startMigration) / 1000;
+                            var ips = Math.round(1000 / diff);
+                            self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
+                            startMigration = new Date();
+                        }
+                        return cb();
+                    }
+                });
+            },function(err)
+            {
+                if (err)
+                {
+                    self.log('error migrating collection',collectionName);
+
+                } else {
+                    self.log('collection done',collectionName);
+                }
+                callbackCollections(err);
+            });
+        } else {
+            self.log('error',err);
+            callbackCollections(err);
+        }
+    });
+}
+
+
+Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, collections, callback )
+{
+    var self = this;
+    self.log('found',collections.length,'collection');
+    async.eachSeries(collections,function( collection, callbackCollections )
+    {
+        if (true === configuration.emptySeries)
+        {
+            self.emptySeries(collection,function()
+            {
+                self.migrateCollection(prepareFunction, collection,callbackCollections);
+            })
+        } else {
+            self.migrateCollection(prepareFunction, collection,callbackCollections);
+        }
+    },callback);
+
+
+}
+
+
+
+Mongo2Influx.prototype.emptySeries = function(collectionName,callback)
+{
+    influxDB.readPoints('DELETE FROM '+collectionName+' WHERE time < now();',callback);
+}
+
+
+
 Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
 {
     if (!mongodb)
@@ -107,55 +193,14 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
     if ('function' != typeof prepareFunction)
         return callback('missing prepare function');
     var self = this;
-
     mongodb.collections(function(err,collections)
     {
-        self.log('found',collections.length,'collection');
-        async.eachSeries(collections,function(collection,callbackCollections)
+        if (err)
         {
-
-            var collectionName = collection.collectionName;
-            if ( -1 !== collectionName.indexOf('system')) return callbackCollections();
-            self.log('next collection: ',collectionName);
-            var startDump = new Date();
-            collection.find().toArray(function(err, results) {
-                if (!err && _.isArray(results))
-                {
-                    self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
-
-                    var index =0;
-                    var startMigration = new Date();
-                    async.eachLimit(results,configuration.limit,function(row,cb){
-                        var data = prepareFunction(row);
-
-                        if (!row.time) {
-                            self.log('skipped row',row);
-                            return cb();
-                        }
-
-                        influxDB.writePoint(collectionName, data , {pool : false}, function(err) {
-                            index++;
-                            if (0 == index%1000)
-                            {
-                                var diff = (new Date()-startMigration) / 1000;
-                                var ips = Math.round(1000 / diff);
-                                self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
-                                startMigration = new Date();
-                            }
-                            if (cb) cb();
-                        });
-                    },function(err,res)
-                    {
-                        self.log('collection done',collectionName);
-                        callbackCollections(err);
-                    });
-                } else {
-                    self.log('error',err);
-                    callbackCollections(err);
-                }
-            });
-
-        },callback);
+            callback(err);
+        } else {
+            self.migrateCollections(prepareFunction,options, collections,callback);
+        }
     });
 
 }
