@@ -120,8 +120,8 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
                     self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
 
                     var index =0;
+                    var startMigration = new Date();
                     async.eachLimit(results,8,function(row,cb){
-                        var startMigration = new Date();
                         var data = prepareFunction(row);
 
                         if (!row.time) {
@@ -134,8 +134,8 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
                             if (0 == index%1000)
                             {
                                 var diff = (new Date()-startMigration) / 1000;
-                                var ips = 1000 / diff;
-                                self.log('collection',collectionName,'item #',index,'@',ips,' inserts/sec');
+                                var ips = Math.round(1000 / diff);
+                                self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
                                 startMigration = new Date();
                             }
                             if (cb) cb();
