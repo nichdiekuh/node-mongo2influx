@@ -22,7 +22,9 @@ var mongo2influx = new Mongo2Influx({
             database    : 'source-database'
 
         },
-        logging : true // defaults to true, logs progress to cli
+        logging     : true, // defaults to true, logs progress to cli
+        limit       : 4, // number of parallel requests, defaults to 4
+        emptySeries : false // if true, empties influx series before inserting new rows. defaults to false
     });
 
 
