@@ -28,13 +28,15 @@ var configuration =
         password    : '',
         hostname    : 'localhost',
         port        : 27017,
-        database    : 'default'
+        database    : 'default',
+        querylimit  : 100000
     },
-    logging     : true,
-    limit       : 4,
-    emptySeries : false
+    logging         : true,
+    limit           : 2,
+    insertlimit     : 100,
+    emptySeries     : false
 
-}
+};
 
 var influxServer, influxDB, mongoClient, mongodb;
 
@@ -54,8 +56,9 @@ var Mongo2Influx = function(options)
 
     if (options.limit) configuration.limit = options.limit;
     if (options.logging) configuration.logging = options.logging;
+    if (options.emptySeries) configuration.emptySeries = options.emptySeries;
 
-}
+};
 
 Mongo2Influx.prototype.connect = function (cb)
 {
@@ -82,9 +85,10 @@ Mongo2Influx.prototype.connect = function (cb)
             return cb(err);
         }
         mongodb = mongoClient.db(configuration.mongodb.database);
-        if (cb) cb(null);
+        return cb(null);
+
     });
-}
+};
 
 
 Mongo2Influx.prototype.log = function ()
@@ -92,63 +96,114 @@ Mongo2Influx.prototype.log = function ()
     if (configuration.logging) {
         console.log(_.values(arguments).join(' '));
     }
-}
+};
+
+
 
 Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,callbackCollections)
 {
     var self = this;
     var collectionName = collection.collectionName;
-    if ( -1 !== collectionName.indexOf('system')) return callbackCollections();
-    self.log('next collection: ',collectionName);
     var startDump = new Date();
-    collection.find().toArray(function(err, results) {
-        if (!err && _.isArray(results))
+
+    self.countItems(collection,function(err,itemCount)
+    {
+        if (err) return callbackCollections(err);
+        var jobCount = Math.ceil(itemCount/configuration.mongodb.querylimit);
+        var mongoJobs = [];
+        for (var i=0; i<jobCount;++i)
+            mongoJobs.push(i*configuration.mongodb.querylimit);
+
+        var rowsSkipped = 0;
+        async.eachSeries(mongoJobs,function(mongoOffset,callbackFind)
         {
-            self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
-
-            var index =0;
-            var startMigration = new Date();
-            async.eachLimit(results,configuration.limit,function(row,cb){
-                var data = prepareFunction(row);
-
-                if (!row.time) {
-                    self.log('skipped row',row);
-                    return cb();
-                }
-                influxDB.writePoint(collectionName, data , {pool : false}, function(err) {
-                    if (err)
-                    {
-                        return cb(err)
-                    }
-                    else {
-                        index++;
-                        if (0 == index%1000)
-                        {
-                            var diff = (new Date()-startMigration) / 1000;
-                            var ips = Math.round(1000 / diff);
-                            self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
-                            startMigration = new Date();
-                        }
-                        return cb();
-                    }
-                });
-            },function(err)
-            {
-                if (err)
+            collection.find().limit(configuration.mongodb.querylimit).skip(mongoOffset).toArray(function(err, results) {
+                if (!err && _.isArray(results))
                 {
-                    self.log('error migrating collection',collectionName);
+                    self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
 
+                    var index =0;
+                    var lastIndex =0;
+
+                    var startMigration = new Date();
+
+                    var jobCount = Math.ceil(results.length/configuration.insertlimit);
+                    var jobs = [];
+                    for (var i=0; i<jobCount;++i)
+                        jobs.push(i*configuration.insertlimit);
+
+                    var bench = function()
+                    {
+                        var inserts = index-lastIndex;
+                        lastIndex=index;
+                        var diff = (new Date()-startMigration) / 1000;
+                        var ips = Math.round(inserts/ diff);
+                        self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
+                        startMigration = new Date();
+
+                    };
+
+                    var statInterval = setInterval(bench,2500);
+
+
+                    async.eachLimit(jobs,configuration.limit,function(offset,cb){
+                        var data = [];
+                        var offsetLimit = offset + configuration.insertlimit -1;
+                        if (offsetLimit >= results.length) offsetLimit = results.length-1;
+
+                        for (var i=offset;i<=offsetLimit;++i)
+                        {
+                            var row = prepareFunction(results[i]);
+                            if (!row.time) {
+                                rowsSkipped++;
+                            } else {
+                                data.push(row);
+                            }
+                        }
+
+                        influxDB.writePoints(collectionName, data , {pool : false}, function(err) {
+                            if (err)
+                            {
+                                return cb(err)
+                            }
+                            else {
+                                index += data.length;
+                                return cb();
+                            }
+                        });
+                    },function(err)
+                    {
+                        clearInterval(statInterval);
+                        callbackFind(err);
+                    });
                 } else {
-                    self.log('collection done',collectionName);
+                    results = null;
+                    callbackFind(err);
                 }
-                callbackCollections(err);
             });
-        } else {
-            self.log('error',err);
+        },function(err)
+        {
+            if (err)
+            {
+                self.log('error migrating collection',collectionName);
+
+            } else {
+                var successRate = 100 / itemCount * (itemCount-rowsSkipped);
+                self.log('collection',collectionName,'done, skipped',rowsSkipped,'rows, successrate:',successRate,'%');
+            }
             callbackCollections(err);
-        }
+        });
     });
-}
+};
+
+
+Mongo2Influx.prototype.countItems = function (collection,callback)
+{
+    collection.count(function(err,count)
+    {
+        callback(err,count);
+    });
+};
 
 
 Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, collections, callback )
@@ -157,9 +212,13 @@ Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, 
     self.log('found',collections.length,'collection');
     async.eachSeries(collections,function( collection, callbackCollections )
     {
+        var collectionName = collection.collectionName;
+        if ( -1 !== collectionName.indexOf('system')) return callbackCollections();
+        self.log('next collection: ',collectionName);
+
         if (true === configuration.emptySeries)
         {
-            self.emptySeries(collection,function()
+            self.emptySeries(collection.collectionName,function()
             {
                 self.migrateCollection(prepareFunction, collection,callbackCollections);
             })
@@ -167,16 +226,23 @@ Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, 
             self.migrateCollection(prepareFunction, collection,callbackCollections);
         }
     },callback);
-
-
-}
+};
 
 
 
 Mongo2Influx.prototype.emptySeries = function(collectionName,callback)
 {
-    influxDB.readPoints('DELETE FROM '+collectionName+' WHERE time < now();',callback);
-}
+    var self = this;
+    var start = new Date();
+    self.log('Truncating influx series',collectionName);
+    influxDB.readPoints('DELETE FROM '+collectionName+' WHERE time < now();',function(err)
+    {
+        var diff = new Date()-start;
+
+        self.log('took',diff,'ms');
+        callback(err);
+    });
+};
 
 
 
@@ -202,8 +268,7 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
             self.migrateCollections(prepareFunction,options, collections,callback);
         }
     });
-
-}
+};
 
 
 module.exports = Mongo2Influx;
