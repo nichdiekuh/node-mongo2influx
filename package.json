@@ -23,8 +23,18 @@
   "dependencies": {
     "async": "~0.2.10",
     "underscore": "~1.5.2",
-    "influxdb": "0.0.1",
-    "mongodb": "~1.3.23"
+    "mongodb": "~1.3.23",
+    "influx": "~0.1.1"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "bugs": {
+    "url": "https://github.com/nichdiekuh/node-mongo2influx/issues"
+  },
+  "homepage": "https://github.com/nichdiekuh/node-mongo2influx",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
 }
