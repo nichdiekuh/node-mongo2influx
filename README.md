@@ -6,6 +6,9 @@ Migrates time series data from mongodb to influxdb.
 It takes a mongodb and an influxdb database, reads *ALL* mongodb collections, passes each row to a "prepareData function"
 and inserts the results into influxdb.
 
+## Installation
+
+`npm install mongo2influx`
 
 ## Options
 
