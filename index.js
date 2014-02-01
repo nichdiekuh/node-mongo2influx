@@ -57,6 +57,7 @@ var Mongo2Influx = function(options)
     if (options.limit) configuration.limit = options.limit;
     if (options.logging) configuration.logging = options.logging;
     if (options.emptySeries) configuration.emptySeries = options.emptySeries;
+    if (options.insertlimit) configuration.insertlimit = options.insertlimit;
 
 };
 
@@ -168,6 +169,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                             }
                             else {
                                 index += data.length;
+                                delete(data);
                                 return cb();
                             }
                         });
@@ -178,6 +180,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                     });
                 } else {
                     results = null;
+                    delete(results);
                     callbackFind(err);
                 }
             });
@@ -210,7 +213,7 @@ Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, 
 {
     var self = this;
     self.log('found',collections.length,'collection');
-    async.eachSeries(collections,function( collection, callbackCollections )
+    async.eachLimit(collections,2,function( collection, callbackCollections )
     {
         var collectionName = collection.collectionName;
         if ( -1 !== collectionName.indexOf('system')) return callbackCollections();
@@ -239,7 +242,7 @@ Mongo2Influx.prototype.emptySeries = function(collectionName,callback)
     {
         var diff = new Date()-start;
 
-        self.log('took',diff,'ms');
+        self.log('Truncating influx series',collectionName,'took',diff,'ms');
         callback(err);
     });
 };

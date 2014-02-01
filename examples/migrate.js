@@ -13,10 +13,15 @@ var mongo2influx = new Mongo2Influx({
         },
         mongodb : {
             hostname    : 'xx.xx.xx.xx',
-            database    : 'source-database'
+            database    : 'source-database',
+            querylimit  : 200000 // # of items to fetch per query
+        },
+        logging     : true, //logs to cli
+        limit       : 2,  // # of parallel insert functions
+        insertlimit : 150, // # of points to insert per query
+        emptySeries : true
 
-        }
-    });
+});
 
 
 function prepareData(row)
