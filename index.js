@@ -4,8 +4,20 @@ var _ = require('underscore');
 var async = require('async');
 var influx  = require('influx');
 
+var charm = require('charm')();
+
+charm.pipe(process.stdout);
+
+//emitter.setMaxListeners(100);
+var logBuffer = [];
+
 var MongoClient = require('mongodb').MongoClient
     , Server = require('mongodb').Server;
+
+
+var collectionsInProgres  = {};
+var collectionsIndex = 0;
+var collectionsCount = 0;
 
 var configuration =
 {
@@ -39,6 +51,8 @@ var configuration =
 };
 
 var influxServer, influxDB, mongoClient, mongodb;
+
+var drawInterval = false;
 
 
 var Mongo2Influx = function(options)
@@ -91,13 +105,70 @@ Mongo2Influx.prototype.connect = function (cb)
     });
 };
 
+var drawing=false;
+Mongo2Influx.prototype.draw = function()
+{
+    if (drawing) return;
+    drawing = true;
+    if (!configuration.logging) return;
+    charm.foreground('white');
+    charm.write('--=[log]=---------------------------\n');
+     _.each(logBuffer,function(line)
+    {
+        charm.column(0);
+        charm.write(line);
+        charm.down();
+    });
+    charm.down(18-logBuffer.length);
+    charm.column(0);
+    var progress = 100 / collectionsCount * collectionsIndex;
+    charm.write('Overall progress ').foreground('green').write(Math.round(progress)+'%');
+    charm.foreground('white').write('('+collectionsIndex+'/'+collectionsCount+')');
+    charm.down();
+    charm.down();
+    charm.column(0);
+    charm.write('--=[current collections]=---------------------------\n');
+    _.each(collectionsInProgres,function(col,name)
+    {
+        charm.column(0);
+        charm.write(name);
+        charm.column(30);
+        charm.write(col.state);
+
+        charm.column(45);
+        charm.foreground('green');
+        charm.write(Math.round(col.progress)+'%');
+        charm.foreground('white');
+        charm.column(50);
+        var ips = Math.round(col.ips).toString();
+        if (0 != ips)
+        {
+            charm.foreground('blue').write(ips).write(' inserts/sec');
+            charm.foreground('white');
+        }
+        charm.down();
+    })
+    charm.column(0);
+    drawing = false;
+
+}
+
+
 
 Mongo2Influx.prototype.log = function ()
 {
     if (configuration.logging) {
-        console.log(_.values(arguments).join(' '));
+        charm.reset();
+        logBuffer.push(_.values(arguments).join(' '));
+        while (15 < logBuffer.length) logBuffer.shift();
     }
 };
+
+Mongo2Influx.prototype.updateCollection = function(collectionName,values)
+{
+    _.extend(collectionsInProgres[collectionName],values);
+    this.draw();
+}
 
 
 
@@ -116,12 +187,17 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
             mongoJobs.push(i*configuration.mongodb.querylimit);
 
         var rowsSkipped = 0;
+
+
         async.eachSeries(mongoJobs,function(mongoOffset,callbackFind)
         {
+
+            self.updateCollection(collectionName,{state : 'reading'});
             collection.find().limit(configuration.mongodb.querylimit).skip(mongoOffset).toArray(function(err, results) {
                 if (!err && _.isArray(results))
                 {
                     self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
+                    self.updateCollection(collectionName,{state : 'inserting'});
 
                     var index =0;
                     var lastIndex =0;
@@ -141,10 +217,12 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         var ips = Math.round(inserts/ diff);
                         self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
                         startMigration = new Date();
+                        var progress = 100 / itemCount * index;
 
+                        self.updateCollection(collectionName,{state : 'inserting',progress : progress,ips: ips,item:index});
                     };
 
-                    var statInterval = setInterval(bench,2500);
+                    var statInterval = setInterval(bench,1000);
 
 
                     async.eachLimit(jobs,configuration.limit,function(offset,cb){
@@ -194,6 +272,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                 var successRate = 100 / itemCount * (itemCount-rowsSkipped);
                 self.log('collection',collectionName,'done, skipped',rowsSkipped,'rows, successrate:',successRate,'%');
             }
+            delete(collectionsInProgres[collectionName]);
             callbackCollections(err);
         });
     });
@@ -215,10 +294,17 @@ Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, 
     self.log('found',collections.length,'collection');
     async.eachLimit(collections,2,function( collection, callbackCollections )
     {
+        collectionsIndex++;
         var collectionName = collection.collectionName;
         if ( -1 !== collectionName.indexOf('system')) return callbackCollections();
         self.log('next collection: ',collectionName);
 
+        collectionsInProgres[collectionName] = {
+            state       : '',
+            progress    : 0,
+            ips         : 0,
+            item        : 0
+        };
         if (true === configuration.emptySeries)
         {
             self.emptySeries(collection.collectionName,function()
@@ -238,9 +324,12 @@ Mongo2Influx.prototype.emptySeries = function(collectionName,callback)
     var self = this;
     var start = new Date();
     self.log('Truncating influx series',collectionName);
+    self.updateCollection(collectionName,{state : 'truncating'});
+
     influxDB.readPoints('DELETE FROM '+collectionName+' WHERE time < now();',function(err)
     {
         var diff = new Date()-start;
+        self.updateCollection(collectionName,{state : 'truncated'});
 
         self.log('Truncating influx series',collectionName,'took',diff,'ms');
         callback(err);
@@ -256,19 +345,29 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
         return callback('mongodb is not connected');
     }
 
+
+
+
     if ('function' == typeof options)
         callback = options;
 
     if ('function' != typeof prepareFunction)
         return callback('missing prepare function');
     var self = this;
+
+    collectionsIndex = 0;
     mongodb.collections(function(err,collections)
     {
         if (err)
         {
             callback(err);
         } else {
-            self.migrateCollections(prepareFunction,options, collections,callback);
+            collectionsCount = collections.length;
+            self.migrateCollections(prepareFunction,options, collections,function(err)
+            {
+//                clearInterval(drawInterval);
+                callback(err);
+            });
         }
     });
 };
