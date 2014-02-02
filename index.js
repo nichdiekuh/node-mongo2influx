@@ -7,6 +7,10 @@ var influx  = require('influx');
 var charm = require('charm')();
 
 charm.pipe(process.stdout);
+charm.on('^C', function () {
+   charm.down(2).foreground('white');
+    process.exit();
+});
 
 //emitter.setMaxListeners(100);
 var logBuffer = [];
