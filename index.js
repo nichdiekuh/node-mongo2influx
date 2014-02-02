@@ -109,6 +109,8 @@ var drawing=false;
 Mongo2Influx.prototype.draw = function()
 {
     if (drawing) return;
+    charm.reset();
+
     drawing = true;
     if (!configuration.logging) return;
     charm.foreground('white');
@@ -158,8 +160,10 @@ Mongo2Influx.prototype.draw = function()
 Mongo2Influx.prototype.log = function ()
 {
     if (configuration.logging) {
-        charm.reset();
-        logBuffer.push(_.values(arguments).join(' '));
+        var date = new Date();
+        var line = date.getHours()+':'+date.getMinutes()+':'+date.getSeconds();
+        line += ': '+_.values(arguments).join(' ');
+        logBuffer.push(line);
         while (15 < logBuffer.length) logBuffer.shift();
     }
 };
@@ -167,7 +171,7 @@ Mongo2Influx.prototype.log = function ()
 Mongo2Influx.prototype.updateCollection = function(collectionName,values)
 {
     _.extend(collectionsInProgres[collectionName],values);
-    this.draw();
+//    this.draw();
 }
 
 
@@ -215,17 +219,17 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         lastIndex=index;
                         var diff = (new Date()-startMigration) / 1000;
                         var ips = Math.round(inserts/ diff);
-                        self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
+//                        self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
                         startMigration = new Date();
-                        var progress = 100 / itemCount * index;
+                        var progress = 100 / itemCount * (index+mongoOffset);
 
                         self.updateCollection(collectionName,{state : 'inserting',progress : progress,ips: ips,item:index});
                     };
 
-                    var statInterval = setInterval(bench,1000);
+                    var statInterval = setInterval(bench,500);
 
 
-                    async.eachLimit(jobs,configuration.limit,function(offset,cb){
+                    async.eachSeries(jobs,function(offset,cb){
                         var data = [];
                         var offsetLimit = offset + configuration.insertlimit -1;
                         if (offsetLimit >= results.length) offsetLimit = results.length-1;
@@ -292,7 +296,7 @@ Mongo2Influx.prototype.migrateCollections = function( prepareFunction, options, 
 {
     var self = this;
     self.log('found',collections.length,'collection');
-    async.eachLimit(collections,2,function( collection, callbackCollections )
+    async.eachLimit(collections,configuration.limit,function( collection, callbackCollections )
     {
         collectionsIndex++;
         var collectionName = collection.collectionName;
@@ -354,7 +358,7 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
     if ('function' != typeof prepareFunction)
         return callback('missing prepare function');
     var self = this;
-
+    drawInterval = setInterval(self.draw,500);
     collectionsIndex = 0;
     mongodb.collections(function(err,collections)
     {
@@ -365,7 +369,7 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
             collectionsCount = collections.length;
             self.migrateCollections(prepareFunction,options, collections,function(err)
             {
-//                clearInterval(drawInterval);
+                clearInterval(drawInterval);
                 callback(err);
             });
         }
