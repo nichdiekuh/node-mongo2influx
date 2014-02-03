@@ -8,11 +8,10 @@ var charm = require('charm')();
 
 charm.pipe(process.stdout);
 charm.on('^C', function () {
-   charm.down(2).foreground('white');
-    process.exit();
+   charm.down(2).column(0).foreground('white');
+   process.exit();
 });
 
-//emitter.setMaxListeners(100);
 var logBuffer = [];
 
 var MongoClient = require('mongodb').MongoClient
@@ -109,13 +108,10 @@ Mongo2Influx.prototype.connect = function (cb)
     });
 };
 
-var drawing=false;
 Mongo2Influx.prototype.draw = function()
 {
-    if (drawing) return;
     charm.reset();
 
-    drawing = true;
     if (!configuration.logging) return;
     charm.foreground('white');
     charm.write('--=[log]=---------------------------\n');
@@ -153,11 +149,10 @@ Mongo2Influx.prototype.draw = function()
             charm.foreground('white');
         }
         charm.down();
-    })
+    });
     charm.column(0);
-    drawing = false;
 
-}
+};
 
 
 
@@ -175,8 +170,7 @@ Mongo2Influx.prototype.log = function ()
 Mongo2Influx.prototype.updateCollection = function(collectionName,values)
 {
     _.extend(collectionsInProgres[collectionName],values);
-//    this.draw();
-}
+};
 
 
 
@@ -223,15 +217,12 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         lastIndex=index;
                         var diff = (new Date()-startMigration) / 1000;
                         var ips = Math.round(inserts/ diff);
-//                        self.log('collection',collectionName,'item #',index,'@',ips,'inserts/sec');
                         startMigration = new Date();
                         var progress = 100 / itemCount * (index+mongoOffset);
-
                         self.updateCollection(collectionName,{state : 'inserting',progress : progress,ips: ips,item:index});
                     };
 
                     var statInterval = setInterval(bench,500);
-
 
                     async.eachSeries(jobs,function(offset,cb){
                         var data = [];
@@ -262,12 +253,12 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                     },function(err)
                     {
                         clearInterval(statInterval);
-                        callbackFind(err);
+                        return callbackFind(err);
                     });
                 } else {
                     results = null;
                     delete(results);
-                    callbackFind(err);
+                    return callbackFind(err);
                 }
             });
         },function(err)
@@ -334,7 +325,7 @@ Mongo2Influx.prototype.emptySeries = function(collectionName,callback)
     self.log('Truncating influx series',collectionName);
     self.updateCollection(collectionName,{state : 'truncating'});
 
-    influxDB.readPoints('DELETE FROM '+collectionName+' WHERE time < now();',function(err)
+    influxDB.query('DELETE FROM '+collectionName+' WHERE time < now();',function(err)
     {
         var diff = new Date()-start;
         self.updateCollection(collectionName,{state : 'truncated'});
@@ -352,8 +343,6 @@ Mongo2Influx.prototype.migrate = function ( prepareFunction, options, callback )
     {
         return callback('mongodb is not connected');
     }
-
-
 
 
     if ('function' == typeof options)
