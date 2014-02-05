@@ -1,6 +1,6 @@
 {
   "name": "mongo2influx",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Migrates timeseries data from mongodb to influxdb",
   "main": "index.js",
   "repository": {
