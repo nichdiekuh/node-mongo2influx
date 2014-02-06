@@ -17,6 +17,7 @@ var logBuffer = [];
 var MongoClient = require('mongodb').MongoClient
     , Server = require('mongodb').Server;
 
+var ObjectID = require('mongodb').ObjectID;
 
 var collectionsInProgres  = {};
 var collectionsIndex = 0;
@@ -190,16 +191,27 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
 
         var rowsSkipped = 0;
 
+        var lastID
 
         async.eachSeries(mongoJobs,function(mongoOffset,callbackFind)
         {
 
             self.updateCollection(collectionName,{state : 'reading'});
-            collection.find().limit(configuration.mongodb.querylimit).skip(mongoOffset).toArray(function(err, results) {
+
+            var where;
+            if (lastID)
+            {
+                where = {'_id' : {'$gt' : lastID }};
+            }
+
+            var cursor = collection.find(where).sort({_id : 1}).limit(configuration.mongodb.querylimit);
+
+            cursor.toArray(function(err, results) {
                 if (!err && _.isArray(results))
                 {
                     self.log('reading results from',collectionName,results.length,'rows, took',(new Date()-startDump),'ms');
                     self.updateCollection(collectionName,{state : 'inserting'});
+
 
                     var index =0;
                     var lastIndex =0;
@@ -210,6 +222,8 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                     var jobs = [];
                     for (var i=0; i<jobCount;++i)
                         jobs.push(i*configuration.insertlimit);
+
+                    lastID = results[results.length-1]['_id'];
 
                     var bench = function()
                     {
@@ -222,7 +236,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         self.updateCollection(collectionName,{state : 'inserting',progress : progress,ips: ips,item:index});
                     };
 
-                    var statInterval = setInterval(bench,500);
+//                    var statInterval = setInterval(bench,500);
 
                     async.eachSeries(jobs,function(offset,cb){
                         var data = [];
@@ -240,6 +254,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         }
 
                         influxDB.writePoints(collectionName, data , {pool : false}, function(err) {
+                            bench();
                             if (err)
                             {
                                 return cb(err)
@@ -252,7 +267,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         });
                     },function(err)
                     {
-                        clearInterval(statInterval);
+//                        clearInterval(statInterval);
                         return callbackFind(err);
                     });
                 } else {
