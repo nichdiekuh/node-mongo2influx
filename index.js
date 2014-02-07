@@ -1,5 +1,6 @@
 
 
+
 var _ = require('underscore');
 var async = require('async');
 var influx  = require('influx');
@@ -205,6 +206,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
             }
 
             var cursor = collection.find(where).sort({_id : 1}).limit(configuration.mongodb.querylimit);
+            var startMigration;
 
             cursor.toArray(function(err, results) {
                 if (!err && _.isArray(results))
@@ -215,8 +217,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
 
                     var index =0;
                     var lastIndex =0;
-
-                    var startMigration = new Date();
+                    startMigration = new Date();
 
                     var jobCount = Math.ceil(results.length/configuration.insertlimit);
                     var jobs = [];
@@ -224,19 +225,6 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         jobs.push(i*configuration.insertlimit);
 
                     lastID = results[results.length-1]['_id'];
-
-                    var bench = function()
-                    {
-                        var inserts = index-lastIndex;
-                        lastIndex=index;
-                        var diff = (new Date()-startMigration) / 1000;
-                        var ips = Math.round(inserts/ diff);
-                        startMigration = new Date();
-                        var progress = 100 / itemCount * (index+mongoOffset);
-                        self.updateCollection(collectionName,{state : 'inserting',progress : progress,ips: ips,item:index});
-                    };
-
-//                    var statInterval = setInterval(bench,500);
 
                     async.eachSeries(jobs,function(offset,cb){
                         var data = [];
@@ -254,7 +242,7 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                         }
 
                         influxDB.writePoints(collectionName, data , {pool : false}, function(err) {
-                            bench();
+
                             if (err)
                             {
                                 return cb(err)
@@ -262,17 +250,31 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
                             else {
                                 index += data.length;
                                 delete(data);
+
+                                var inserts = index-lastIndex;
+                                lastIndex=index;
+                                var diff = (new Date()-startMigration) / 1000;
+                                var ips = Math.round(inserts/ diff);
+                                startMigration = new Date();
+                                var progress = 100 / itemCount * (index+mongoOffset);
+                                self.updateCollection(collectionName,{state : 'inserting',progress : progress,ips: ips,item:index});
+
+                                delete(ips);
+                                delete(diff);
+                                delete(progress);
+
                                 return cb();
                             }
                         });
                     },function(err)
                     {
-//                        clearInterval(statInterval);
                         return callbackFind(err);
                     });
                 } else {
                     results = null;
                     delete(results);
+                    cursor.rewind();
+                    delete(cursor);
                     return callbackFind(err);
                 }
             });
@@ -285,7 +287,11 @@ Mongo2Influx.prototype.migrateCollection = function(prepareFunction, collection,
             } else {
                 var successRate = 100 / itemCount * (itemCount-rowsSkipped);
                 self.log('collection',collectionName,'done, skipped',rowsSkipped,'rows, successrate:',successRate,'%');
+                delete(rowsSkipped);
+                delete(itemCount);
+                delete(successRate);
             }
+            collectionsInProgres[collectionName] = null;
             delete(collectionsInProgres[collectionName]);
             callbackCollections(err);
         });
